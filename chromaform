@@ -1247,7 +1247,7 @@ $gsl          $gsl_src
 $hdf5         $hdf5_src
 EOF
 do
-        cat << EOF | while read name repo branch
+	cat << EOF | while read name repo branch
 qdpxx                  https://github.com/usqcd-software/qdpxx         devel
 qdp-jit                https://github.com/JeffersonLab/qdp-jit         devel
 qdp-jit-prev-llvm17    https://github.com/JeffersonLab/qdp-jit         7c0cdf308dba714e544d4b1f0f5dc3d69e1b46df
@@ -1324,14 +1324,41 @@ EOF
 		fi
 		info "Downloading $proj"
 		run rm -rf $srcdir/$proj $tmp/{d,d.zip,d.bz2,d.xz,d.gz}
+		fallback_repo=""
+		fallback_branch=""
+		case "$proj" in
+		redstar|redstar-pdf|redstar-pdf-next|redstar-pdf-next-meta)
+			fallback_repo="https://github.com/orginos/redstar"
+			fallback_branch="macOS"
+			;;
+		hadron|hadron-meta)
+			fallback_repo="https://github.com/orginos/hadron"
+			fallback_branch="macOS"
+			;;
+		superbblas|superbblas-sp)
+			fallback_repo="https://github.com/orginos/superbblas"
+			fallback_branch="macOS"
+			;;
+		esac
 		case $repo in
 		*zip) mkdir $tmp/d && run wget --no-check-certificate -q "$repo" -O $tmp/d.zip && unzip $tmp/d.zip -d $tmp/d && mv $tmp/d/* $srcdir/$proj;;
 		*bz2) mkdir $tmp/d && run wget --no-check-certificate -q "$repo" -O $tmp/d.bz2 && tar xjf $tmp/d.bz2 -C $tmp/d && mv $tmp/d/* $srcdir/$proj;;
 		*gz) mkdir $tmp/d && run wget --no-check-certificate -q "$repo" -O $tmp/d.gz && tar xzf $tmp/d.gz -C $tmp/d && mv $tmp/d/* $srcdir/$proj;;
 		*xz) mkdir $tmp/d && run wget --no-check-certificate -q "$repo" -O $tmp/d.xz && tar xJf $tmp/d.xz -C $tmp/d && mv $tmp/d/* $srcdir/$proj;;
 		*git*)
-			( GIT_ASKPASS=w git clone --recursive $repo $srcdir/$proj || GIT_ASKPASS=w git clone --recursive ${repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj ) && \
-				( cd $srcdir/$proj; git checkout ${branch} && git submodule update --recursive ) || run false # checkout a branch or a commit
+			(
+				GIT_ASKPASS=w git clone --recursive $repo $srcdir/$proj || \
+				GIT_ASKPASS=w git clone --recursive ${repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+			) && ( cd $srcdir/$proj; git checkout ${branch} && git submodule update --recursive ) || \
+			(
+				[ x${fallback_repo}x == xx ] && run false
+				info "Primary repo failed; trying fallback for $proj"
+				run rm -rf $srcdir/$proj
+				(
+					GIT_ASKPASS=w git clone --recursive $fallback_repo $srcdir/$proj || \
+					GIT_ASKPASS=w git clone --recursive ${fallback_repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+				) && ( cd $srcdir/$proj; git checkout ${fallback_branch} && git submodule update --recursive )
+			) || run false # checkout a branch or a commit
 			;;
 		*) echo "Don't know how to download $repo"; exit 1;;
 		esac
