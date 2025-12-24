@@ -1376,9 +1376,17 @@ EOF
 			fallback_repo="git@github.com:JeffersonLab/kno_hadron.git"
 			fallback_branch="macOS"
 			;;
-		superbblas|superbblas-sp)
+		superbblas)
 			fallback_repo="https://github.com/orginos/superbblas"
 			fallback_branch="macOS"
+			;;
+		superbblas-sp)
+			fallback_repo="https://github.com/orginos/superbblas"
+			if [ "`uname -s`" == "Darwin" ]; then
+				fallback_branch="macOS-devel"
+			else
+				fallback_branch="macOS"
+			fi
 			;;
 		esac
 		case $repo in
@@ -1409,7 +1417,7 @@ EOF
 			) || \
 			(
 				[ x${fallback_repo}x == xx ] && run false
-				info "Primary repo failed; trying fallback for $proj"
+				info "Primary repo failed; trying fallback for $proj from $fallback_repo (branch ${fallback_branch:-default})"
 				run rm -rf $srcdir/$proj
 				(
 					if [ "$proj" = "wm_chroma" ]; then
@@ -1817,6 +1825,14 @@ if [ x${openblas}x != xx ]; then
 	[ "`uname -s`" == "Darwin" -a x${openblas_use_gcc}x == xx ] && openblas_use_gcc="yes"
 	openblas_use_openmp=1
 	[ x${use_openmp}x == xnopx ] && openblas_use_openmp=0
+	openblas_cc="gcc"
+	openblas_cxx="g++"
+	openblas_fc="gfortran"
+	if [ -x /opt/homebrew/bin/gcc-15 ]; then
+		openblas_cc="/opt/homebrew/bin/gcc-15"
+		openblas_cxx="/opt/homebrew/bin/g++-15"
+		openblas_fc="/opt/homebrew/bin/gfortran-15"
+	fi
 	if [ $do_cleaning == yes ]; then
 		[ ${openblas} == clean ] && rm -rf $sdir $bdir $idir
 	elif [ ${openblas} == install -o ! -d ${idir} ]; then
@@ -1828,7 +1844,7 @@ if [ x${openblas}x != xx ]; then
 			unset CFLAGS
 			unset CXXFLAGS
 			if [ x${openblas_use_gcc} == xyes ]; then
-				run ${MYMAKE} -j $MAKE_JN USE_OPENMP=${openblas_use_openmp} CC=gcc CXX=g++ FC=gfortran libs netlib shared
+				run ${MYMAKE} -j $MAKE_JN USE_OPENMP=${openblas_use_openmp} CC=${openblas_cc} CXX=${openblas_cxx} FC=${openblas_fc} libs netlib shared
 			else
 				run ${MYMAKE} -j $MAKE_JN USE_OPENMP=${openblas_use_openmp} libs netlib shared
 			fi
@@ -1851,11 +1867,11 @@ EOF
 	elif [ `detect_fortran_compiler` == gcc -o `detect_fortran_compiler` == nvc -o x${openblas_use_gcc} == xyes ]; then
 		LIBS+=" -lgfortran"
 		[ x${use_openmp}x != xnopx ] && LIBS+=" -lgomp"
-		if command -v gfortran &> /dev/null ; then
-			gfortran_libdir="$( dirname $( gfortran -print-file-name=libgfortran.dylib ) )"
+		if command -v ${openblas_fc} &> /dev/null ; then
+			gfortran_libdir="$( dirname $( ${openblas_fc} -print-file-name=libgfortran.dylib ) )"
 			LDFLAGS+=" -L${gfortran_libdir}"
 			LIBS+=" -L${gfortran_libdir}"
-			quadmath_lib="$( gfortran -print-file-name=libquadmath.dylib )"
+			quadmath_lib="$( ${openblas_fc} -print-file-name=libquadmath.dylib )"
 			[ -f "$quadmath_lib" ] && LIBS+=" -lquadmath"
 		fi
 	elif [ `detect_fortran_compiler` == icc ]; then
@@ -2604,7 +2620,7 @@ if [ x${chroma}x != xx ]; then
 	info "Doing ${chroma} chroma; source=$sdir build=$bdir install=$idir"
 	if [ $do_cleaning == yes ]; then
 		[ ${chroma} == clean ] && rm -rf $sdir $bdir $idir
-	elif [ ${chroma} == install -o ! -d ${idir} ]; then
+	elif [ ${chroma} == install -o ! -d ${idir} -o ! -x ${idir}/bin/chroma ]; then
 		run rm -rf $bdir $idir
 		run mkdir -p $bdir
 		pushd $bdir
