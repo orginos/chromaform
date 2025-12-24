@@ -14,10 +14,12 @@ chromaform [--source-dir=dir] [--build-dir=dir] [--install-dir=dir]             
            [--blas=openblas|--blas=openblas-system|--blas=atlas-system|--blas=mkl]        \\
            [-g|-O|-Onone] [--avx|--avx2|--knl|--avx512|--zen2|--zen3] [--autoflags=no]    \\
            [--std=c++11|--std=c++14|--std=c++17|--std=c++20]                              \\
+           [--wm_chroma-branch=branch]                                                    \\
            [--clean|--install|--update|--download-only] [gcc] [openmpi] [mvapich2]        \\
            [cmake] [llvm] [automake] [cub] [thrust] [openblas] [gmp] [libxml2] [eigen]    \\
            [ncurses] [libfuse3] [anarchofs]                                               \\
-           [qmp] [qdp] [superbblas] [primme] [magma] [mgproto] [qphix] [quda] [chroma]    \\
+           [qmp] [qdp] [arprec] [superbblas] [primme] [magma] [mgproto] [qphix] [quda] [chroma]    \\
+           [wm_chroma]                                                                   \\
            [laplace_eigs] [adat] [colorvec] [tensor] [hadron] [redstar]                   \\
            [CC=...] [CFLAGS=...] [CXX=...] [CXXFLAGS=...] [FC=...] [SM=...]               \\
            [CMAKE_EXTRA_FLAGS=...]
@@ -72,6 +74,8 @@ Some packages have special optional features.
 --meta
    Install the devel-meta version of hadron.
 
+--wm_chroma-branch=<branch>
+   Select the wm_chroma branch to use; default is new_master.
 
 * CMake, LLVM, BLAS, GMP, LIBXML2:
    Some packages require CMake, LLVM, and BLAS, and this are the options to select
@@ -182,6 +186,7 @@ use_next="nop"
 use_restructure="nop"
 use_superb="nop"
 use_qdpjit=""
+use_qdp_cmake="nop"
 use_superb_next="nop"
 use_mg="nop"
 use_llvm=""
@@ -200,6 +205,8 @@ use_std=""
 openblas_use_gcc=""
 do_export_env=""
 action="update"
+wm_chroma=""
+arprec=""
 
 # Jean Zay's frontend does not have much memory and chroma linking fails often
 mymake() {
@@ -239,6 +246,8 @@ if [ x${CUDADIR}x == xx ] ; then
 fi
 SM="${SM:-sm_70}"
 AMDGPU_TARGETS="${AMDGPU_TARGETS:-gfx900;gfx906;gfx908}"
+wm_chroma_branch="new_master"
+wm_chroma_repo="git@github.com:JeffersonLab/wm_chroma.git"
 tmp="`mktemp -d`"
 idir=""
 
@@ -312,6 +321,7 @@ for (( i=1 ; i<=n ; ++i )); do
 	--std=c++17) use_std="c++17";;
 	--std=c++20) use_std="c++20";;
 	--std=c++23) use_std="c++23";;
+	--wm_chroma-branch=*) wm_chroma_branch="${arg#--wm_chroma-branch=}";;
 	--env=*) do_export_env="${arg#--env=}";;
 	openblas) openblas="$action";use_blas="openblas";;
 	openblas-gcc) openblas="$action";use_blas="openblas";openblas_use_gcc="yes";;
@@ -323,6 +333,7 @@ for (( i=1 ; i<=n ; ++i )); do
 	thrust) thrust="$action";use_thrust="thrust";;
 	qmp) qmp="$action";;
 	qdp) qdp="$action";;
+	arprec) arprec="$action";;
 	superbblas) superbblas="$action";;
 	qphix) qphix="$action";;
 	primme) primme="$action";;
@@ -331,6 +342,7 @@ for (( i=1 ; i<=n ; ++i )); do
 	quda) quda="$action";;
 	mugiq) mugiq="$action";;
 	chroma) chroma="$action";;
+	wm_chroma) wm_chroma="$action";;
 	laplace_eigs) laplace_eigs="$action";;
 	adat) adat="$action";;
 	colorvec) colorvec="$action";;
@@ -721,11 +733,14 @@ fi
 [ x${chroma}x != xx -a x${superbblas}x != xx ] && primme="${primme:-update}"
 [ x${mgproto}x != xx ] && primme="${primme:-update}"
 [ x${qphix}${mgproto}${quda}${chroma}${laplace_eigs}x != xx ] && qdp="${qdp:-update}"
+[ x${wm_chroma}x != xx ] && qdp="${qdp:-update}"
+[ x${wm_chroma}x != xx ] && arprec="${arprec:-update}"
 [ x${qphix}${quda}${analysis}x != xx ] && eigen="${eigen:-update}"
 
 [ x${analysis}x != xx ] && redstar="${redstar:-update}" && hdf5="${hdf5:-update}" && gsl="${gsl:-update}"
 [ x${laplace_eigs}x != xx ] && primme="${primme:-update}"
 [ x${redstar}x != xx ] && hadron="${hadron:-update}" && adat="${adat:-update}" && colorvec="${colorvec:-update}"
+[ x${wm_chroma}x != xx ] && chroma="${chroma:-update}"
 [ x${colorvec}x != xx ] && hadron="${hadron:-update}" && adat="${adat:-update}"
 [ x${adat}x != xx -a ${use_gmp} == gmp ] && gmp="${gmp:-update}"
 [ x${gcc}x != xx ] && gmp="${gmp:-update}"
@@ -925,6 +940,22 @@ if [ ${use_autoflags} == yes ]; then
 			fi
 		fi
 
+		if [ "`uname -s`" == "Darwin" ] && command -v xcrun &> /dev/null; then
+			sdkroot_detected="`xcrun --sdk macosx --show-sdk-path 2>/dev/null`"
+			if [ -n "${sdkroot_detected}" ]; then
+				export SDKROOT="${SDKROOT:-$sdkroot_detected}"
+				if ! echo " $CFLAGS " | grep -q -- " -isysroot "; then
+					CFLAGS+=" -isysroot ${SDKROOT}"
+				fi
+				if ! echo " $CXXFLAGS " | grep -q -- " -isysroot "; then
+					CXXFLAGS+=" -isysroot ${SDKROOT}"
+				fi
+				if ! echo " $LDFLAGS " | grep -q -- " -isysroot "; then
+					LDFLAGS+=" -isysroot ${SDKROOT}"
+				fi
+			fi
+		fi
+
 		if [ x${use_openmp}x == xx ] && [ $is_apple_clang == yes ]; then
 			if [ -n "${libomp_ldflags}" ]; then
 				info "Found libomp for Apple clang; enabling OpenMP"
@@ -1085,6 +1116,12 @@ if [ x${chroma}x != xx ]; then
 		chroma_src="chroma-sp"
 	fi
 fi
+if [ x${wm_chroma}x != xx ]; then
+	wm_chroma_src="wm_chroma"
+fi
+if [ x${arprec}x != xx ]; then
+	arprec_src="arprec"
+fi
 if [ x${primme}x != xx ]; then
 	primme_src="primme"
 fi
@@ -1208,6 +1245,7 @@ $cub          $cub_src
 $prim         $prim_src
 $thrust       $thrust_src
 $openblas     $openblas_src
+$arprec       $arprec_src
 $eigen        $eigen_src
 $primme       $primme_src
 $magma        $magma_src
@@ -1220,6 +1258,7 @@ $mugiq        $mugiq_src
 $quda         $quda_src
 $cpm          $cpm_src
 $chroma       $chroma_src
+$wm_chroma    $wm_chroma_src
 $laplace_eigs $laplace_eigs_src
 $adat         $adat_src
 $colorvec     $colorvec_src
@@ -1257,6 +1296,7 @@ chroma-sp              https://github.com/JeffersonLab/chroma          eloy/mgpr
 chroma-restructure     https://github.com/JeffersonLab/chroma          restructure
 chroma-fs-sp           https://github.com/twLQCD/chroma.git            travis/mgproton-progress-blocking-fs
 chroma                 https://github.com/JeffersonLab/chroma          devel
+wm_chroma              ${wm_chroma_repo}   ${wm_chroma_branch}
 qphix                  https://github.com/JeffersonLab/qphix           devel
 mgproto                https://github.com/JeffersonLab/mg_proto        devel
 mgproto2               https://github.com/twLQCD/mg_proto.git          reuse_prolong
@@ -1293,6 +1333,7 @@ thrust                 https://github.com/NVIDIA/thrust/archive/refs/tags/1.17.2
 rocThrust              https://github.com/ROCmSoftwarePlatform/rocThrust/archive/refs/tags/rocm-5.4.3.tar.gz
 rocPRIM                https://github.com/ROCmSoftwarePlatform/rocPRIM/archive/refs/tags/rocm-5.4.3.tar.gz
 openblas               https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.28/OpenBLAS-0.3.28.tar.gz
+arprec                 ${ARPREC_URL:-git@github.com:orginos/wm_arprec.git} wm_master
 cpm                    https://github.com/cpm-cmake/CPM.cmake/archive/refs/tags/v0.40.2.tar.gz
 gmp                    https://gmplib.org/download/gmp/gmp-6.2.1.tar.xz
 libxml2                https://download.gnome.org/sources/libxml2/2.10/libxml2-2.10.2.tar.xz
@@ -1328,11 +1369,11 @@ EOF
 		fallback_branch=""
 		case "$proj" in
 		redstar|redstar-pdf|redstar-pdf-next|redstar-pdf-next-meta)
-			fallback_repo="https://github.com/orginos/redstar"
+			fallback_repo="git@github.com:JeffersonLab/kno_redstar.git"
 			fallback_branch="macOS"
 			;;
 		hadron|hadron-meta)
-			fallback_repo="https://github.com/orginos/hadron"
+			fallback_repo="git@github.com:JeffersonLab/kno_hadron.git"
 			fallback_branch="macOS"
 			;;
 		superbblas|superbblas-sp)
@@ -1347,17 +1388,49 @@ EOF
 		*xz) mkdir $tmp/d && run wget --no-check-certificate -q "$repo" -O $tmp/d.xz && tar xJf $tmp/d.xz -C $tmp/d && mv $tmp/d/* $srcdir/$proj;;
 		*git*)
 			(
-				GIT_ASKPASS=w git clone --recursive $repo $srcdir/$proj || \
-				GIT_ASKPASS=w git clone --recursive ${repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
-			) && ( cd $srcdir/$proj; git checkout ${branch} && git submodule update --recursive ) || \
+				if [ "$proj" = "wm_chroma" ]; then
+					GIT_ASKPASS=w git clone $repo $srcdir/$proj || \
+					GIT_ASKPASS=w git clone ${repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+				else
+					GIT_ASKPASS=w git clone --recursive $repo $srcdir/$proj || \
+					GIT_ASKPASS=w git clone --recursive ${repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+				fi
+			) && (
+				cd $srcdir/$proj
+				git checkout ${branch}
+				if [ "$proj" = "wm_chroma" ]; then
+					git config -f .gitmodules submodule.other-libs/algebra.path other-libs/algebra
+					git config -f .gitmodules submodule.other-libs/algebra.url git@bitbucket.org:kostasorginos/algebra.git
+					git submodule sync --recursive
+					git submodule update --init --recursive
+				else
+					git submodule update --recursive
+				fi
+			) || \
 			(
 				[ x${fallback_repo}x == xx ] && run false
 				info "Primary repo failed; trying fallback for $proj"
 				run rm -rf $srcdir/$proj
 				(
-					GIT_ASKPASS=w git clone --recursive $fallback_repo $srcdir/$proj || \
-					GIT_ASKPASS=w git clone --recursive ${fallback_repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
-				) && ( cd $srcdir/$proj; git checkout ${fallback_branch} && git submodule update --recursive )
+					if [ "$proj" = "wm_chroma" ]; then
+						GIT_ASKPASS=w git clone $fallback_repo $srcdir/$proj || \
+						GIT_ASKPASS=w git clone ${fallback_repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+					else
+						GIT_ASKPASS=w git clone --recursive $fallback_repo $srcdir/$proj || \
+						GIT_ASKPASS=w git clone --recursive ${fallback_repo/https:\/\/github.com\//git@github.com:} $srcdir/$proj
+					fi
+				) && (
+					cd $srcdir/$proj
+					git checkout ${fallback_branch}
+					if [ "$proj" = "wm_chroma" ]; then
+						git config -f .gitmodules submodule.other-libs/algebra.path other-libs/algebra
+						git config -f .gitmodules submodule.other-libs/algebra.url git@bitbucket.org:kostasorginos/algebra.git
+						git submodule sync --recursive
+						git submodule update --init --recursive
+					else
+						git submodule update --recursive
+					fi
+				)
 			) || run false # checkout a branch or a commit
 			;;
 		*) echo "Don't know how to download $repo"; exit 1;;
@@ -1861,6 +1934,29 @@ if [ x${tensor}x != xx ]; then
 		icc) run ${sdir}/configure --prefix=${idir} --without-arpack $tensor_extra_opts CC=icc CXX=icpc ;;
 		*)   run ${sdir}/configure --prefix=${idir} --without-arpack $tensor_extra_opts F77=$FC ;;
 		esac
+		run ${MYMAKE} install -j $MAKE_JN
+		popd
+	fi
+fi
+
+if [ x${arprec}x != xx ]; then
+	arprec_install="${arprec_src}"
+	sdir="${srcdir}/${arprec_src}"
+	bdir="${builddir}/${arprec_install}"
+	idir="${installdir}/${arprec_install}"
+	info "Doing ${arprec} arprec; source=$sdir build=$bdir install=$idir"
+	if [ $do_cleaning == yes ]; then
+		[ ${arprec} == clean ] && rm -rf $sdir $bdir $idir
+	elif [ ${arprec} == install -o ! -d ${idir} ]; then
+		if [ -f "${sdir}/config.status" ]; then
+			( cd $sdir && run_light make distclean || true )
+		fi
+		run rm -rf $bdir $idir
+		run mkdir -p $bdir
+		pushd $bdir
+		arprec_fc=""
+		[ x${FC}x != xx ] && arprec_fc="FC=${FC} F77=${FC}"
+		run ${sdir}/configure --prefix=${idir} $arprec_fc
 		run ${MYMAKE} install -j $MAKE_JN
 		popd
 	fi
@@ -2566,6 +2662,155 @@ if [ x${chroma}x != xx ]; then
 	fi
 fi
 
+if [ x${wm_chroma}x != xx ]; then
+	wm_chroma_install="${wm_chroma_src}-${chroma_install}"
+	sdir="${srcdir}/${wm_chroma_src}"
+	bdir="${builddir}/${wm_chroma_install}"
+	idir="${installdir}/${wm_chroma_install}"
+	info "Doing ${wm_chroma} wm_chroma; source=$sdir build=$bdir install=$idir"
+	if [ $do_cleaning == yes ]; then
+		[ ${wm_chroma} == clean ] && rm -rf $sdir $bdir $idir
+	elif [ ${wm_chroma} == install -o ! -d ${idir} ]; then
+		run rm -rf $idir
+		pushd $sdir
+		if [ -d .git -a -f .gitmodules ]; then
+			run git config -f .gitmodules submodule.other-libs/algebra.path other-libs/algebra
+			run git config -f .gitmodules submodule.other-libs/algebra.url git@bitbucket.org:kostasorginos/algebra.git
+			run git submodule sync --recursive
+			run git submodule update --init --recursive
+		fi
+		if [ ! -f std_compat.h ] || ! rg -q "constant\\(\\)\\.twopi" std_compat.h; then
+			cat > std_compat.h <<'EOF'
+#ifndef WM_CHROMA_STD_COMPAT_H
+#define WM_CHROMA_STD_COMPAT_H
+
+#include <fstream>
+#include <ios>
+#include <iostream>
+#include <map>
+#include <ostream>
+#include <set>
+#include <sstream>
+#include <string>
+#include <strstream>
+#include <utility>
+#include <vector>
+
+#include "chromabase.h"
+
+using std::cerr;
+using std::cout;
+using std::endl;
+using std::fixed;
+using std::ifstream;
+using std::istringstream;
+using std::map;
+using std::ofstream;
+using std::ostringstream;
+using std::pair;
+using std::set;
+using std::strstream;
+using std::stringstream;
+using std::string;
+using std::vector;
+
+namespace Chroma {
+static const Real twopi = constant().twopi;
+using std::endl;
+using std::string;
+}
+
+#endif
+EOF
+		fi
+		if [ ! -f lib/std_compat.h ]; then
+			cat > lib/std_compat.h <<'EOF'
+#ifndef WM_CHROMA_STD_COMPAT_PROXY_H
+#define WM_CHROMA_STD_COMPAT_PROXY_H
+
+#include "../std_compat.h"
+
+#endif
+EOF
+		fi
+		if [ -f CMakeLists.txt ] && ! rg -q "std_compat.h" CMakeLists.txt; then
+			python3 - <<'PY'
+from pathlib import Path
+
+path = Path("CMakeLists.txt")
+text = path.read_text()
+needle = 'set(CMAKE_CXX_FLAGS "${CHROMA_CXX_FLAGS} -I${CMAKE_SOURCE_DIR}/lib")'
+extra = 'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include ${CMAKE_SOURCE_DIR}/std_compat.h")'
+if needle in text and extra not in text:
+    text = text.replace(needle, needle + "\n" + extra)
+    path.write_text(text)
+PY
+		fi
+		wm_chroma_arprec="${ARPREC_DIR:-}"
+		if [ x${wm_chroma_arprec}x == xx -a -d ${installdir}/arprec ]; then
+			wm_chroma_arprec="${installdir}/arprec"
+		fi
+		[ x${wm_chroma_arprec}x == xx ] && wm_chroma_arprec="/usr/local"
+
+		wm_chroma_qd="${QD_DIR:-}"
+		if [ x${wm_chroma_qd}x == xx -a -f /opt/homebrew/include/qd/qd_real.h ]; then
+			wm_chroma_qd="/opt/homebrew"
+		elif [ x${wm_chroma_qd}x == xx -a -f /usr/local/include/qd/qd_real.h ]; then
+			wm_chroma_qd="/usr/local"
+		fi
+		[ x${wm_chroma_qd}x == xx ] && wm_chroma_qd="/usr/local"
+
+		wm_chroma_itpp="${ITPP_DIR:-}"
+		if [ x${wm_chroma_itpp}x == xx -a -f /opt/homebrew/include/itpp/itbase.h ]; then
+			wm_chroma_itpp="/opt/homebrew"
+		elif [ x${wm_chroma_itpp}x == xx -a -f /usr/local/include/itpp/itbase.h ]; then
+			wm_chroma_itpp="/usr/local"
+		fi
+		[ x${wm_chroma_itpp}x == xx ] && wm_chroma_itpp="/usr/local"
+		if [ ! -f "${wm_chroma_arprec}/include/arprec/mp_real.h" ]; then
+			echo "ARPREC headers not found at ${wm_chroma_arprec}/include. Set ARPREC_DIR to your arprec install."
+			exit 1
+		fi
+		if [ ! -f "${wm_chroma_qd}/include/qd/qd_real.h" ]; then
+			echo "QD headers not found at ${wm_chroma_qd}/include. Set QD_DIR to your qd install."
+			exit 1
+		fi
+		if [ ! -f "${wm_chroma_itpp}/include/itpp/itbase.h" ]; then
+			echo "ITPP headers not found at ${wm_chroma_itpp}/include. Set ITPP_DIR to your itpp install."
+			exit 1
+		fi
+		if [ -f ${sdir}/create_makefile.pl ]; then
+			run perl ${sdir}/create_makefile.pl \
+				${installdir}/${chroma_install} \
+				${wm_chroma_arprec} \
+				${wm_chroma_qd} \
+				${wm_chroma_itpp}
+			run ${MYMAKE} -j $MAKE_JN
+			run mkdir -p ${idir}/bin ${idir}/lib
+			[ -f wm_chroma ] && run cp wm_chroma ${idir}/bin/
+			[ -f wm_chroma.x ] && run cp wm_chroma.x ${idir}/bin/
+			[ -f lib/libwm_chroma.a ] && run cp lib/libwm_chroma.a ${idir}/lib/
+			popd
+		else
+			popd
+			run rm -rf $bdir
+			run mkdir -p $bdir
+			pushd $bdir
+			wm_chroma_cmake_args="-DCHROMA_PREFIX_PATH=${installdir}/${chroma_install} -DCMAKE_INSTALL_PREFIX=${idir} -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+			if [ x${LAPACK_LD}x != xx ]; then
+				wm_chroma_cmake_args="${wm_chroma_cmake_args} -DLAPACK_LD=${LAPACK_LD}"
+			fi
+			if [ x${LAPACK_LIBS}x != xx ]; then
+				wm_chroma_cmake_args="${wm_chroma_cmake_args} -DLAPACK_LIBS=${LAPACK_LIBS}"
+			fi
+			run cmake ${wm_chroma_cmake_args} ${sdir}
+			run ${MYMAKE} -j $MAKE_JN
+			run ${MYMAKE} install -j $MAKE_JN
+			popd
+		fi
+	fi
+fi
+
 if [ x${adat}x != xx ]; then
 	adat_install="${adat_src}"
 	[ $use_superb == yes ] && adat_install="${adat_src}-${superbblas_src}"
@@ -2587,6 +2832,11 @@ if [ x${adat}x != xx ]; then
 		run ${sdir}/configure --prefix=${idir} $adat_extra
 		run ${MYMAKE} install -j $MAKE_JN
 		popd
+	fi
+	if [ ! -x "${idir}/bin/adat-config" ] && [ -f "${bdir}/adat-config" ]; then
+		run mkdir -p "${idir}/bin"
+		run cp "${bdir}/adat-config" "${idir}/bin/"
+		run chmod +x "${idir}/bin/adat-config"
 	fi
 fi
 
@@ -2666,7 +2916,13 @@ if [ x${colorvec}x != xx ]; then
 		run mkdir -p $bdir
 		pushd $bdir
 		[ $use_mpi == yes ] && colorvec_extra="--enable-mpi"
-		run ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} ${colorvec_extra}
+		adat_config="${installdir}/${adat_install}/bin/adat-config"
+		adat_path="${installdir}/${adat_install}/bin"
+		if [ -x "${adat_config}" ]; then
+			run env PATH="${adat_path}:$PATH" ADAT_CONFIG="${adat_config}" ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} ${colorvec_extra}
+		else
+			run ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} ${colorvec_extra}
+		fi
 		run ${MYMAKE} install -j $MAKE_JN
 		popd
 	fi
@@ -2686,7 +2942,13 @@ if [ x${redstar}x != xx ]; then
 		run mkdir -p $bdir
 		pushd $bdir
 		[ $use_mpi == yes ] && redstar_extra="--enable-mpi"
-		run ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} --with-colorvec=${installdir}/${colorvec_install} $redstar_extra
+		adat_config="${installdir}/${adat_install}/bin/adat-config"
+		adat_path="${installdir}/${adat_install}/bin"
+		if [ -x "${adat_config}" ]; then
+			run env PATH="${adat_path}:$PATH" ADAT_CONFIG="${adat_config}" ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} --with-colorvec=${installdir}/${colorvec_install} $redstar_extra
+		else
+			run ${sdir}/configure --prefix=${idir} --with-hadron=${installdir}/${hadron_install} --with-adat=${installdir}/${adat_install} --with-colorvec=${installdir}/${colorvec_install} $redstar_extra
+		fi
 		run ${MYMAKE} install -j $MAKE_JN
 		popd
 	fi
