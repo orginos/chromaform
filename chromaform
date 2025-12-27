@@ -19,7 +19,7 @@ chromaform [--source-dir=dir] [--build-dir=dir] [--install-dir=dir]             
            [cmake] [llvm] [automake] [cub] [thrust] [openblas] [gmp] [libxml2] [eigen]    \\
            [ncurses] [libfuse3] [anarchofs]                                               \\
            [qmp] [qdp] [arprec] [superbblas] [primme] [magma] [mgproto] [qphix] [quda] [chroma]    \\
-           [wm_chroma]                                                                   \\
+           [wm_chroma] [py_chroma]                                                       \\
            [laplace_eigs] [adat] [colorvec] [tensor] [hadron] [redstar]                   \\
            [CC=...] [CFLAGS=...] [CXX=...] [CXXFLAGS=...] [FC=...] [SM=...]               \\
            [CMAKE_EXTRA_FLAGS=...]
@@ -207,6 +207,7 @@ do_export_env=""
 action="update"
 wm_chroma=""
 arprec=""
+py_chroma=""
 
 # Jean Zay's frontend does not have much memory and chroma linking fails often
 mymake() {
@@ -248,6 +249,10 @@ SM="${SM:-sm_70}"
 AMDGPU_TARGETS="${AMDGPU_TARGETS:-gfx900;gfx906;gfx908}"
 wm_chroma_branch="new_master"
 wm_chroma_repo="git@github.com:JeffersonLab/wm_chroma.git"
+qdpxx_repo="https://github.com/usqcd-software/qdpxx"
+qdpxx_branch="devel"
+qdp_force_src=""
+qdp_flavor=""
 tmp="`mktemp -d`"
 idir=""
 
@@ -343,6 +348,7 @@ for (( i=1 ; i<=n ; ++i )); do
 	mugiq) mugiq="$action";;
 	chroma) chroma="$action";;
 	wm_chroma) wm_chroma="$action";;
+	py_chroma) py_chroma="$action";;
 	laplace_eigs) laplace_eigs="$action";;
 	adat) adat="$action";;
 	colorvec) colorvec="$action";;
@@ -741,6 +747,17 @@ fi
 [ x${laplace_eigs}x != xx ] && primme="${primme:-update}"
 [ x${redstar}x != xx ] && hadron="${hadron:-update}" && adat="${adat:-update}" && colorvec="${colorvec:-update}"
 [ x${wm_chroma}x != xx ] && chroma="${chroma:-update}"
+[ x${py_chroma}x != xx ] && chroma="${chroma:-update}" && primme="${primme:-update}" && qdp="${qdp:-update}"
+if [ x${py_chroma}x != xx ]; then
+	if [ $use_qdpjit == yes ]; then
+		echo "Incompatible options: py_chroma requires qdpxx (no qdp-jit)"
+		exit 1
+	fi
+	qdp_force_src="${qdpxx_py_src}"
+	qdpxx_repo="git@github.com:orginos/qdpxx.git"
+	qdpxx_branch="py_qdp"
+	qdp_flavor="py_qdp"
+fi
 [ x${colorvec}x != xx ] && hadron="${hadron:-update}" && adat="${adat:-update}"
 [ x${adat}x != xx -a ${use_gmp} == gmp ] && gmp="${gmp:-update}"
 [ x${gcc}x != xx ] && gmp="${gmp:-update}"
@@ -789,7 +806,7 @@ fi
 
 [ x${qdp}x != xx -a $use_arch != cpu -a $use_tinfo == tinfo ] && ncurses="${ncurses:-update}"
 
-[ x${llvm}${qphix}${mgproto}${quda}${mugiq}${magma}x != xx -a $use_cmake == cmake ] && cmake="${cmake:-update}"
+[ x${llvm}${qphix}${mgproto}${quda}${mugiq}${magma}${py_chroma}x != xx -a $use_cmake == cmake ] && cmake="${cmake:-update}"
 
 [ x${gcc}x != xx -a x${mpfr}x == xx ] && mpfr="${mpfr:-update}"
 [ x${gcc}x != xx -a x${isl}x == xx ] && isl="${isl:-update}"
@@ -1083,7 +1100,8 @@ if [ x${qmp}x != xx ]; then
 	qmp_src="qmp"
 fi
 if [ x${qdp}x != xx ]; then
-	qdp_src="qdpxx"
+qdp_src="qdpxx"
+qdpxx_py_src="qdpxx-py_qdp"
 	if [ $use_arch != cpu -a $use_qdpjit == yes ] ; then
 	       	llvm_ver="`llvm-config --version`"
         	case $llvm_ver in
@@ -1091,6 +1109,7 @@ if [ x${qdp}x != xx ]; then
 		*)           qdp_src="qdp-jit" ;;
         	esac
 	fi
+	[ x${qdp_force_src}x != xx ] && qdp_src="$qdp_force_src"
 fi
 if [ x${quda}x != xx ]; then
 	quda_src="quda"
@@ -1287,7 +1306,8 @@ $hdf5         $hdf5_src
 EOF
 do
 	cat << EOF | while read name repo branch
-qdpxx                  https://github.com/usqcd-software/qdpxx         devel
+qdpxx                  ${qdpxx_repo}                                  ${qdpxx_branch}
+qdpxx-py_qdp           ${qdpxx_repo}                                  ${qdpxx_branch}
 qdp-jit                https://github.com/JeffersonLab/qdp-jit         devel
 qdp-jit-prev-llvm17    https://github.com/JeffersonLab/qdp-jit         7c0cdf308dba714e544d4b1f0f5dc3d69e1b46df
 qmp                    https://github.com/usqcd-software/qmp           devel
@@ -1377,16 +1397,12 @@ EOF
 			fallback_branch="macOS"
 			;;
 		superbblas)
-			fallback_repo="https://github.com/orginos/superbblas"
+			fallback_repo="git@github.com:orginos/superbblas.git"
 			fallback_branch="macOS"
 			;;
 		superbblas-sp)
-			fallback_repo="https://github.com/orginos/superbblas"
-			if [ "`uname -s`" == "Darwin" ]; then
-				fallback_branch="macOS-devel"
-			else
-				fallback_branch="macOS"
-			fi
+			fallback_repo="git@github.com:orginos/superbblas.git"
+			fallback_branch="macOS"
 			;;
 		esac
 		case $repo in
@@ -2214,6 +2230,7 @@ if [ x${qdp}x != xx ]; then
 
 	for qdp_nd in 3 4 ; do
 		qdp_install="${qdp_src}-${qdp_prec}-nd${qdp_nd}"
+		[ x${qdp_flavor}x != xx ] && qdp_install+="-${qdp_flavor}"
 		[ ${use_qdp_cmake} == yes ] && qdp_install+="-cmake"
 		bdir="${builddir}/${qdp_install}"
 		idir="${installdir}/${qdp_install}"
@@ -2255,8 +2272,10 @@ if [ x${qdp}x != xx ]; then
 		fi
 	done
 	qdp_install="${qdp_src}-${qdp_prec}-nd4"
+	[ x${qdp_flavor}x != xx ] && qdp_install+="-${qdp_flavor}"
 	[ ${use_qdp_cmake} == yes ] && qdp_install+="-cmake"
 	qdp3d_install="${qdp_src}-${qdp_prec}-nd3"
+	[ x${qdp_flavor}x != xx ] && qdp3d_install+="-${qdp_flavor}"
 	[ ${use_qdp_cmake} == yes ] && qdp3d_install+="-cmake"
 	if [ $use_qdpjit == yes ]; then
 		export LD_LIBRARY_PATH="${installdir}/${qdp_install}/lib:$LD_LIBRARY_PATH"
@@ -2675,6 +2694,25 @@ if [ x${chroma}x != xx ]; then
 		fi
 		run ${MYMAKE} install -j $MAKE_JN
 		popd
+	fi
+fi
+
+if [ x${py_chroma}x != xx ]; then
+	py_chroma_install="py_chroma-${chroma_install}"
+	sdir="${srcdir}/py_chroma"
+	bdir="${builddir}/${py_chroma_install}"
+	idir="${installdir}/${py_chroma_install}"
+	info "Doing ${py_chroma} py_chroma; source=$sdir build=$bdir install=$idir"
+	if [ $do_cleaning == yes ]; then
+		[ ${py_chroma} == clean ] && rm -rf $bdir $idir
+	elif [ ${py_chroma} == install -o ! -d ${idir} ]; then
+		run rm -rf $bdir $idir
+		run mkdir -p $bdir
+		pychroma_cmake_args="-S ${sdir} -B ${bdir} -DCMAKE_INSTALL_PREFIX=${idir} -DCHROMA_PREFIX=${installdir}/${chroma_install} -DQDP_PREFIX=${installdir}/${qdp_install} -DPRIMME_PREFIX=${installdir}/${primme_install}"
+		[ x${hdf5}x != xx ] && pychroma_cmake_args="${pychroma_cmake_args} -DHDF5_ROOT=${installdir}/${hdf5_install}"
+		run cmake ${pychroma_cmake_args} ${CMAKE_EXTRA_FLAGS}
+		run ${MYMAKE} -C ${bdir} -j $MAKE_JN
+		run cmake --install ${bdir}
 	fi
 fi
 
