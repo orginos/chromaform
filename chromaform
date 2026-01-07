@@ -131,6 +131,10 @@ Control the flags use for building the packages.
    By default, besides setting CFLAGS and CXXFLAGS as described, flags are added to
    activate AVX2 and OpenMP compiler extensions.
 
+* OpenMPI options:
+--openmpi-hcoll=no
+   Disable the Mellanox hcoll collectives component, which can pull in libudev.
+
 * Actions and packages:
 An action is either of the flags --clean, --install, or --update, and can be followed by
 several packages and other actions. The --update action is implied if no other action was
@@ -165,6 +169,11 @@ will be considered a variable assignation. For instance:
 
 will export the value of the variables CC, CXX, and PATH to subshells and executed
 commands.
+
+--env=<file>
+   Write environment exports in sh format to the given file.
+--env-csh=<file>
+   Write environment exports in csh/tcsh format to the given file.
 EOF
 
 srcdir="src"
@@ -198,7 +207,9 @@ use_autoflags="yes"
 use_opt="opt"
 use_std=""
 openblas_use_gcc=""
+use_openmpi_hcoll="yes"
 do_export_env=""
+do_export_env_csh=""
 action="update"
 
 # Jean Zay's frontend does not have much memory and chroma linking fails often
@@ -301,6 +312,8 @@ for (( i=1 ; i<=n ; ++i )); do
 	--blas=mkl) use_blas="mkl-system";;
 	--openmp=no) use_openmp="nop";;
 	--openmp=yes) use_openmp="yes";;
+	--openmpi-hcoll=no) use_openmpi_hcoll="nop";;
+	--openmpi-hcoll=yes) use_openmpi_hcoll="yes";;
 	--mpi=no) use_mpi="nop";;
 	--mpi=yes) use_mpi="yes";;
 	--gmp=build) use_gmp="gmp";;
@@ -323,6 +336,7 @@ for (( i=1 ; i<=n ; ++i )); do
 	--std=c++20) use_std="c++20";;
 	--std=c++23) use_std="c++23";;
 	--env=*) do_export_env="${arg#--env=}";;
+	--env-csh=*) do_export_env_csh="${arg#--env-csh=}";;
 	openblas) openblas="$action";use_blas="openblas";;
 	openblas-gcc) openblas="$action";use_blas="openblas";openblas_use_gcc="yes";;
 	cmake) cmake="$action";use_cmake="cmake";;
@@ -364,6 +378,10 @@ for (( i=1 ; i<=n ; ++i )); do
 	esac
 	shift
 done
+
+if [ x${do_export_env_csh}x != xx -a x${do_export_env}x == xx ]; then
+	do_export_env="${tmp}/env.sh"
+fi
 
 # Prompting
 
@@ -1279,7 +1297,7 @@ gmp                    https://gmplib.org/download/gmp/gmp-6.2.1.tar.xz
 libxml2                https://download.gnome.org/sources/libxml2/2.10/libxml2-2.10.2.tar.xz
 xsimd                  https://github.com/xtensor-stack/xsimd.git	13.0.0
 ncurses                https://ftp.gnu.org/gnu/ncurses/ncurses-6.2.tar.gz
-mpfr                   https://www.mpfr.org/mpfr-current/mpfr-4.2.1.tar.xz
+mpfr                   https://www.mpfr.org/mpfr-current/mpfr-4.2.2.tar.xz
 gcc                    https://mirrors.ocf.berkeley.edu/gnu/gcc/gcc-14.1.0/gcc-14.1.0.tar.xz
 isl                    https://gcc.gnu.org/pub/gcc/infrastructure/isl-0.24.tar.bz2
 mpc                    https://ftp.gnu.org/gnu/mpc/mpc-1.2.1.tar.gz
@@ -1338,6 +1356,7 @@ info "Install directory: $installdir"
 if [ x${do_export_env}x != xx ]; then
 	info "Exporting environment in ${do_export_env}"
 	rm -f $do_export_env
+	: > $do_export_env
 fi
 
 if [ x${automake}x != xx ]; then
@@ -1475,6 +1494,9 @@ if [ x${openmpi}x != xx ]; then
 			openmpi_extra+=" --with-cuda=$CUDADIR --with-cuda-libdir=`dirname $libcuda_path` --enable-mca-dso=btl-smcuda,rcache-rgpusm,rcache-gpusm,accelerator-cuda CPPFLAGS=-I`dirname $inccudart_path` LDFLAGS=-L`dirname $libcudart_path`" ;;
 		hip) openmpi_extra+=" --with-rocm=`hipconfig -R`" ;;
 		esac
+		if [ $use_openmpi_hcoll == nop ]; then
+			openmpi_extra+=" --without-hcoll"
+		fi
 		CFLAGS= CXXFLAGS= LDFLAGS= LIBS= run ${sdir}/configure --prefix=${idir} --with-ucx=${installdir}/${ucx_install} --enable-mca-no-build=btl-uct --disable-oshmem --disable-io-romio $openmpi_extra
 		run ${MYMAKE} -j $MAKE_JN
 		run ${MYMAKE} install
@@ -2681,6 +2703,26 @@ if [ x${laplace_eigs}x != xx ]; then
 		run cp laplace_eigs vecs_combine_4d vecs_combine_3d ${idir}
 		popd
 	fi
+fi
+
+if [ x${do_export_env_csh}x != xx ]; then
+	info "Exporting csh environment in ${do_export_env_csh}"
+	rm -f $do_export_env_csh
+	while IFS= read -r line; do
+		case "$line" in
+		"") echo "" >> $do_export_env_csh ;;
+		\#*) echo "$line" >> $do_export_env_csh ;;
+		export\ *=*)
+			var="${line#export }"
+			name="${var%%=*}"
+			val="${var#*=}"
+			echo "setenv $name $val" >> $do_export_env_csh
+			;;
+		*)
+			echo "$line" >> $do_export_env_csh
+			;;
+		esac
+	done < "$do_export_env"
 fi
 
 # Everything went ok!
