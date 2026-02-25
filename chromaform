@@ -650,7 +650,11 @@ if [ x${use_cmake}x == xx ]; then
 		cmake_version="`cmake --version 2>&1  | grep "^cmake version" | tr . ' '`"
 		ver_maj="`echo $cmake_version | while read a a ver_maj ver_minor a ; do echo $ver_maj; done`"
 		ver_minor="`echo $cmake_version | while read a a ver_maj ver_minor a ; do echo $ver_minor; done`"
-		( [ $use_arch != hip -a $ver_maj -ge 3 -a $ver_minor -ge 18 ] || [ $use_arch == hip -a $ver_maj -ge 3 -a $ver_minor -ge 21 ] ) && use_cmake="cmake-system"
+		if [ $use_arch != hip ]; then
+			( [ $ver_maj -gt 3 ] || [ $ver_maj -eq 3 -a $ver_minor -ge 18 ] ) && use_cmake="cmake-system"
+		else
+			( [ $ver_maj -gt 3 ] || [ $ver_maj -eq 3 -a $ver_minor -ge 21 ] ) && use_cmake="cmake-system"
+		fi
 	fi
 fi
 
@@ -747,7 +751,7 @@ fi
 [ x${laplace_eigs}x != xx ] && primme="${primme:-update}"
 [ x${redstar}x != xx ] && hadron="${hadron:-update}" && adat="${adat:-update}" && colorvec="${colorvec:-update}"
 [ x${wm_chroma}x != xx ] && chroma="${chroma:-update}"
-[ x${py_chroma}x != xx ] && chroma="${chroma:-update}" && primme="${primme:-update}" && qdp="${qdp:-update}"
+[ x${py_chroma}x != xx ] && chroma="${chroma:-update}" && primme="${primme:-update}" && qdp="${qdp:-update}" && hdf5="${hdf5:-update}"
 if [ x${py_chroma}x != xx ]; then
 	if [ $use_qdpjit == yes ]; then
 		echo "Incompatible options: py_chroma requires qdpxx (no qdp-jit)"
@@ -2713,6 +2717,16 @@ if [ x${py_chroma}x != xx ]; then
 		run cmake ${pychroma_cmake_args} ${CMAKE_EXTRA_FLAGS}
 		run ${MYMAKE} -C ${bdir} -j $MAKE_JN
 		run cmake --install ${bdir}
+	fi
+	if [ x${do_export_env}x != xx ]; then
+		lib_ext="so"
+		[ "`uname -s`" == "Darwin" ] && lib_ext="dylib"
+		cat << EOF >> $do_export_env
+# For py_chroma
+export PYCHROMA_PREFIX="${idir}"
+export PYCHROMA_LIB="${idir}/lib/libpychroma.${lib_ext}"
+export PYTHONPATH="${idir}/python:\$PYTHONPATH"
+EOF
 	fi
 fi
 
